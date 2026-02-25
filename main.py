@@ -1,119 +1,73 @@
- from fastapi import FastAPI
+# tech_agent_full.py
+from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain_community.llms import HuggingFacePipeline
-from transformers import pipeline
-import torch
+from langchain.llms import GPT4All
 
-app = FastAPI(title="AI Track Planning Agent")
+# ================================
+# 1️⃣ إعداد LLM محلي
+# ================================
+llm = GPT4All(model="ggml-gpt4all-j-v1.3-groovy")  # أحدث نسخة GPT4All محلي
 
-# ==============================
-# تحميل موديل Open Source
-# ==============================
+# ================================
+# 2️⃣ إعداد قالب المحادثة
+# ================================
+plan_template = """
+المستخدم مهتم بالتراك التكنولوجي: {track_name}
+مستواه: {level}
+عدد الساعات يوميًا: {hours_per_day}
+هدفه: {goal}
 
-model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-
-pipe = pipeline(
-    "text-generation",
-    model=model_id,
-    torch_dtype=torch.float32,
-    device_map="auto",
-    max_new_tokens=700
-)
-
-llm = HuggingFacePipeline(pipeline=pipe)
-
-# ==============================
-# Prompt
-# ==============================
-
-plan_prompt = PromptTemplate(
-    input_variables=["track", "level", "hours", "goal"],
-    template="""
-أنت مستشار تقني محترف.
-
-المعطيات:
-التراك: {track}
-المستوى: {level}
-عدد الساعات يوميًا: {hours}
-الهدف: {goal}
-
-أنشئ خطة تعلم مفصلة لمدة 3 شهور.
-قسّمها بأسابيع.
-اذكر:
-- المهارات المطلوبة
-- مصادر تعلم مجانية
-- مشاريع عملية
-- milestones واضحة
+اعمل خطة تعلم مخصصة له على حسب المعلومات دي.
 """
+
+prompt = PromptTemplate(
+    input_variables=["track_name", "level", "hours_per_day", "goal"],
+    template=plan_template
 )
 
-plan_chain = LLMChain(llm=llm, prompt=plan_prompt)
+agent_chain = LLMChain(llm=llm, prompt=prompt)
 
-# ==============================
-# Session Storage
-# ==============================
+# ================================
+# 3️⃣ دالة توليد الخطة
+# ================================
+def generate_learning_plan(track_name: str, level: str, hours_per_day: str, goal: str):
+    return agent_chain.run(
+        track_name=track_name,
+        level=level,
+        hours_per_day=hours_per_day,
+        goal=goal
+    )
 
-sessions = {}
+# ================================
+# 4️⃣ إعداد FastAPI
+# ================================
+app = FastAPI(title="Tech Learning Agent")
 
-class StartRequest(BaseModel):
-    user_id: str
-    track: str
-
-class AnswerRequest(BaseModel):
-    user_id: str
-    answer: str
-
-# ==============================
-# Endpoints
-# ==============================
+class UserInput(BaseModel):
+    track_name: str
+    level: str
+    hours_per_day: str
+    goal: str
 
 @app.get("/")
 def home():
-    return {"message": "AI Track Agent Running 🚀"}
+    return {"message": "مرحبًا! استخدم /generate-plan لإنتاج خطة تعلم."}
 
-@app.post("/start")
-def start_agent(data: StartRequest):
-    sessions[data.user_id] = {
-        "track": data.track,
-        "step": 1
-    }
+@app.post("/generate-plan")
+def generate_plan(user_input: UserInput):
+    plan = generate_learning_plan(
+        track_name=user_input.track_name,
+        level=user_input.level,
+        hours_per_day=user_input.hours_per_day,
+        goal=user_input.goal
+    )
+    return {"learning_plan": plan}
 
-    return {"question": "مستواك إيه؟ (مبتدئ - متوسط - متقدم)"}
-
-@app.post("/answer")
-def answer_question(data: AnswerRequest):
-
-    user = sessions.get(data.user_id)
-
-    if not user:
-        return {"error": "ابدأ الأول من /start"}
-
-    step = user["step"]
-
-    if step == 1:
-        user["level"] = data.answer
-        user["step"] = 2
-        return {"question": "كام ساعة تقدر تذاكر يوميًا؟"}
-
-    elif step == 2:
-        user["hours"] = data.answer
-        user["step"] = 3
-        return {"question": "هدفك إيه من التراك ده؟"}
-
-    elif step == 3:
-        user["goal"] = data.answer
-
-        plan = plan_chain.run({
-            "track": user["track"],
-            "level": user["level"],
-            "hours": user["hours"],
-            "goal": user["goal"]
-        })
-
-        sessions.pop(data.user_id)
-
-        return {
-            "final_plan": plan
-        }
+# ================================
+# 5️⃣ لتشغيل السيرفر مباشرة
+# ================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
