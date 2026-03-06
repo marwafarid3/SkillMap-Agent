@@ -1,229 +1,242 @@
-import streamlit as st
-import pandas as pd
-from PIL import Image
+# ============================================
+# Nutrition AI Agent
+# LangChain + RAG + Gemini + FastAPI
+# ============================================
+
+from fastapi import FastAPI, UploadFile, File
+from pydantic import BaseModel
+import uvicorn
 import os
+from PIL import Image
+import io
 
-# =========================
-# LangChain Imports (Stable)
-# =========================
+# LangChain
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain.agents import initialize_agent, Tool
+from langchain.memory import ConversationBufferMemory
 
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
-from langchain_text_splitters import CharacterTextSplitter
+# RAG
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.document_loaders import TextLoader
+from langchain.text_splitter import CharacterTextSplitter
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+# ==============================
+# Gemini Model
+# ==============================
 
+os.environ["GOOGLE_API_KEY"] = "YOUR_API_KEY"
 
-# =========================
-# Gemini API KEY
-# =========================
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAFcvpt-Fs_muflBT96HNZbw4c_9Axa0ik"
-
-
-# =========================
-# Load Gemini Model
-# =========================
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-pro",
     temperature=0.3
 )
 
+# ==============================
+# FastAPI
+# ==============================
 
-# =========================
-# Nutrition Knowledge Base
-# =========================
-nutrition_data = [
-    "Protein foods include chicken, eggs, fish, beans and yogurt.",
-    "Healthy carbohydrates include oats, brown rice and sweet potatoes.",
-    "Healthy fats include olive oil, avocado and nuts.",
-    "Weight loss requires a calorie deficit.",
-    "Drink at least 2 liters of water daily.",
-    "Vegetables are low calorie and rich in nutrients.",
-    "Protein helps muscle growth.",
-    "Avoid excessive sugar and processed food."
-]
+app = FastAPI(title="Nutrition AI Agent")
 
+# ==============================
+# RAG Knowledge Base
+# ==============================
 
-docs = [Document(page_content=text) for text in nutrition_data]
+loader = TextLoader("nutrition_knowledge.txt")
+documents = loader.load()
 
-splitter = CharacterTextSplitter(
-    chunk_size=200,
-    chunk_overlap=0
+text_splitter = CharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=50
 )
 
-chunks = splitter.split_documents(docs)
+docs = text_splitter.split_documents(documents)
 
+embeddings = HuggingFaceEmbeddings()
 
-# =========================
-# Embeddings
-# =========================
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/embedding-001"
-)
-
-vectorstore = FAISS.from_documents(
-    chunks,
-    embeddings
-)
+vectorstore = FAISS.from_documents(docs, embeddings)
 
 retriever = vectorstore.as_retriever()
 
+# ==============================
+# Tools
+# ==============================
 
-# =========================
-# RAG Chain (New LangChain)
-# =========================
-prompt = ChatPromptTemplate.from_template(
-"""
-Answer the nutrition question using the context.
+# -------- Calories Tool --------
 
-Context:
-{context}
+def calorie_calculator(data: str):
 
-Question:
-{question}
-"""
-)
+    try:
+        weight, height, age = map(float, data.split(","))
 
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
+        bmr = 10*weight + 6.25*height - 5*age + 5
 
+        return f"Estimated daily calories: {int(bmr*1.2)} kcal"
 
-rag_chain = (
-    {"context": retriever | format_docs, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+    except:
+        return "Format: weight,height,age"
 
 
-# =========================
-# Streamlit UI
-# =========================
-st.title("🥗 Nutrition AI Agent")
+# -------- Meal Plan Tool --------
 
-
-# =========================
-# User Profile
-# =========================
-st.sidebar.header("User Profile")
-
-weight = st.sidebar.number_input("Weight (kg)", 40, 200)
-height = st.sidebar.number_input("Height (cm)", 140, 210)
-age = st.sidebar.number_input("Age", 10, 80)
-
-goal = st.sidebar.selectbox(
-    "Goal",
-    ["Lose Weight", "Maintain Weight", "Gain Muscle"]
-)
-
-
-# =========================
-# Calories Calculator
-# =========================
-def calculate_calories(weight, height, age):
-
-    bmr = 10 * weight + 6.25 * height - 5 * age + 5
-
-    if goal == "Lose Weight":
-        calories = bmr - 400
-    elif goal == "Gain Muscle":
-        calories = bmr + 300
-    else:
-        calories = bmr
-
-    return int(calories)
-
-
-if st.sidebar.button("🔥 Calculate Calories"):
-
-    calories = calculate_calories(weight, height, age)
-
-    st.sidebar.success(f"Daily Calories: {calories}")
-
-
-# =========================
-# Diet Plan Generator
-# =========================
-st.header("🥗 Diet Plan Generator")
-
-if st.button("Generate Diet Plan"):
+def meal_planner(goal: str):
 
     prompt = f"""
-    Create a healthy diet plan.
-
-    Weight: {weight}
-    Height: {height}
-    Age: {age}
-    Goal: {goal}
-
-    Include:
-    breakfast
-    lunch
-    dinner
-    snacks
+    Create a daily nutrition plan for a person with goal: {goal}
+    include breakfast lunch dinner snacks
     """
 
-    response = llm.invoke(prompt)
-
-    st.write(response.content)
+    return llm.invoke(prompt).content
 
 
-# =========================
-# Food Image Analysis
-# =========================
-st.header("📷 Food Image Analysis")
+# -------- Weight Tracker --------
 
-uploaded_file = st.file_uploader("Upload food image")
+user_weights = []
 
-if uploaded_file:
+def weight_tracker(weight: str):
 
-    image = Image.open(uploaded_file)
+    user_weights.append(float(weight))
 
-    st.image(image)
+    avg = sum(user_weights)/len(user_weights)
 
-    prompt = "Describe this food and estimate calories."
-
-    response = llm.invoke([prompt, image])
-
-    st.write(response.content)
+    return f"Weight logged. Current average weight: {avg}"
 
 
-# =========================
-# Weight Tracker
-# =========================
-st.header("📊 Weight Tracker")
+# -------- RAG Nutrition Tool --------
 
-if "weights" not in st.session_state:
-    st.session_state.weights = []
+def nutrition_rag(question: str):
 
-new_weight = st.number_input("Enter today's weight")
+    docs = retriever.get_relevant_documents(question)
 
-if st.button("Add Weight"):
+    context = "\n".join([d.page_content for d in docs])
 
-    st.session_state.weights.append(new_weight)
+    prompt = f"""
+    Answer using the nutrition context.
 
-df = pd.DataFrame(
-    st.session_state.weights,
-    columns=["Weight"]
+    Context:
+    {context}
+
+    Question:
+    {question}
+    """
+
+    return llm.invoke(prompt).content
+
+
+# ==============================
+# Image Analysis Tool
+# ==============================
+
+def analyze_food_image(image_bytes):
+
+    img = Image.open(io.BytesIO(image_bytes))
+
+    prompt = """
+    Identify the food in the image and estimate calories.
+    """
+
+    response = llm.invoke(
+        [prompt, img]
+    )
+
+    return response.content
+
+
+# ==============================
+# Agent Tools
+# ==============================
+
+tools = [
+
+    Tool(
+        name="Calorie Calculator",
+        func=calorie_calculator,
+        description="calculate calories using weight,height,age"
+    ),
+
+    Tool(
+        name="Meal Planner",
+        func=meal_planner,
+        description="generate diet plan"
+    ),
+
+    Tool(
+        name="Weight Tracker",
+        func=weight_tracker,
+        description="track weight progress"
+    ),
+
+    Tool(
+        name="Nutrition Knowledge",
+        func=nutrition_rag,
+        description="answer nutrition questions"
+    )
+
+]
+
+memory = ConversationBufferMemory()
+
+agent = initialize_agent(
+    tools,
+    llm,
+    agent="chat-conversational-react-description",
+    memory=memory,
+    verbose=True
 )
 
-if not df.empty:
-    st.line_chart(df)
+# ==============================
+# Request Models
+# ==============================
+
+class ChatRequest(BaseModel):
+    message: str
 
 
-# =========================
-# Chat with Nutrition AI
-# =========================
-st.header("💬 Chat with Nutrition AI")
+# ==============================
+# API Endpoints
+# ==============================
 
-question = st.text_input("Ask a nutrition question")
+@app.post("/chat")
 
-if question:
+def chat(req: ChatRequest):
 
-    answer = rag_chain.invoke(question)
+    response = agent.run(req.message)
 
-    st.write(answer)
+    return {"response": response}
+
+
+# -----------------------------
+
+@app.post("/analyze-food")
+
+async def analyze_food(file: UploadFile = File(...)):
+
+    image_bytes = await file.read()
+
+    result = analyze_food_image(image_bytes)
+
+    return {"analysis": result}
+
+
+# -----------------------------
+
+@app.post("/log-weight")
+
+def log_weight(weight: float):
+
+    result = weight_tracker(str(weight))
+
+    return {"result": result}
+
+
+# ==============================
+# Run Server
+# ==============================
+
+if __name__ == "__main__":
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000
+    )
