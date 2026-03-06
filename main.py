@@ -4,78 +4,107 @@ from PIL import Image
 import os
 
 # ================================
-# LangChain Imports
+# LangChain Imports (NEW VERSION)
 # ================================
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from langchain_community.vectorstores import FAISS
+
+from langchain_core.documents import Document
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.schema import Document
+
 from langchain.chains import RetrievalQA
 
+
 # ================================
-# Gemini API Key
+# Gemini API KEY
 # ================================
 os.environ["GOOGLE_API_KEY"] = "AIzaSyAFcvpt-Fs_muflBT96HNZbw4c_9Axa0ik"
 
+
 # ================================
-# LLM
+# Load Gemini Model
 # ================================
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash",
     temperature=0.3
 )
 
+
 # ================================
 # Nutrition Knowledge Base (RAG)
 # ================================
 nutrition_data = [
-    "Protein sources include chicken, fish, eggs, beans and yogurt.",
-    "Healthy carbs include oats, brown rice, sweet potatoes and quinoa.",
-    "Healthy fats include avocado, olive oil and nuts.",
-    "For weight loss create a calorie deficit.",
+    "Protein foods include chicken, eggs, fish, beans and yogurt.",
+    "Healthy carbohydrates include oats, brown rice and sweet potatoes.",
+    "Healthy fats include olive oil, avocado and nuts.",
+    "Weight loss requires a calorie deficit.",
     "Drink at least 2 liters of water daily.",
-    "Vegetables like broccoli and spinach are low calorie and high nutrients.",
-    "Eating protein helps muscle growth.",
-    "Avoid excessive sugar and processed foods."
+    "Vegetables are low calorie and rich in nutrients.",
+    "Protein supports muscle growth.",
+    "Avoid processed food and excessive sugar."
 ]
 
 docs = [Document(page_content=text) for text in nutrition_data]
 
-splitter = CharacterTextSplitter(chunk_size=100, chunk_overlap=0)
+
+splitter = CharacterTextSplitter(
+    chunk_size=200,
+    chunk_overlap=0
+)
+
 chunks = splitter.split_documents(docs)
 
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
-vectorstore = FAISS.from_documents(chunks, embeddings)
+# ================================
+# Embeddings + Vector DB
+# ================================
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/embedding-001"
+)
+
+vectorstore = FAISS.from_documents(
+    chunks,
+    embeddings
+)
 
 retriever = vectorstore.as_retriever()
+
 
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     retriever=retriever
 )
 
+
 # ================================
 # Streamlit UI
 # ================================
 st.title("🥗 Nutrition AI Agent")
 
+
 # ================================
-# User Profile
+# Sidebar Profile
 # ================================
 st.sidebar.header("User Profile")
 
 weight = st.sidebar.number_input("Weight (kg)", 40, 200)
 height = st.sidebar.number_input("Height (cm)", 140, 210)
 age = st.sidebar.number_input("Age", 10, 80)
-goal = st.sidebar.selectbox("Goal", ["Lose Weight", "Maintain", "Gain Muscle"])
+
+goal = st.sidebar.selectbox(
+    "Goal",
+    ["Lose Weight", "Maintain Weight", "Gain Muscle"]
+)
+
 
 # ================================
-# Calorie Calculation
+# Calories Calculator
 # ================================
 def calculate_calories(weight, height, age):
 
-    bmr = 10*weight + 6.25*height - 5*age + 5
+    bmr = 10 * weight + 6.25 * height - 5 * age + 5
 
     if goal == "Lose Weight":
         calories = bmr - 400
@@ -86,16 +115,20 @@ def calculate_calories(weight, height, age):
 
     return int(calories)
 
+
 if st.sidebar.button("🔥 Calculate Calories"):
-    cals = calculate_calories(weight, height, age)
-    st.sidebar.success(f"Daily Calories: {cals}")
+
+    calories = calculate_calories(weight, height, age)
+
+    st.sidebar.success(f"Daily Calories: {calories}")
+
 
 # ================================
 # Diet Plan Generator
 # ================================
 st.header("🥗 Generate Diet Plan")
 
-if st.button("Generate Plan"):
+if st.button("Generate Diet Plan"):
 
     prompt = f"""
     Create a healthy diet plan.
@@ -105,24 +138,30 @@ if st.button("Generate Plan"):
     Age: {age}
     Goal: {goal}
 
-    Include breakfast lunch dinner snacks.
+    Include:
+    breakfast
+    lunch
+    dinner
+    snacks
     """
 
     response = llm.invoke(prompt)
 
     st.write(response.content)
 
+
 # ================================
 # Food Image Analysis
 # ================================
-st.header("📷 Analyze Food Image")
+st.header("📷 Food Image Analysis")
 
 uploaded_file = st.file_uploader("Upload food image")
 
 if uploaded_file:
 
     image = Image.open(uploaded_file)
-    st.image(image)
+
+    st.image(image, caption="Uploaded Food Image")
 
     prompt = "Describe this food and estimate calories."
 
@@ -130,8 +169,9 @@ if uploaded_file:
 
     st.write(response.content)
 
+
 # ================================
-# Weight Tracking
+# Weight Tracker
 # ================================
 st.header("📊 Weight Tracker")
 
@@ -141,22 +181,31 @@ if "weights" not in st.session_state:
 new_weight = st.number_input("Enter today's weight")
 
 if st.button("Add Weight"):
+
     st.session_state.weights.append(new_weight)
 
-df = pd.DataFrame(st.session_state.weights, columns=["Weight"])
+
+df = pd.DataFrame(
+    st.session_state.weights,
+    columns=["Weight"]
+)
 
 if not df.empty:
+
     st.line_chart(df)
 
+
 # ================================
-# Chat with AI
+# Chat with AI (RAG)
 # ================================
-st.header("💬 Chat with Nutrition Agent")
+st.header("💬 Chat with Nutrition AI")
 
-user_input = st.text_input("Ask about nutrition...")
+user_question = st.text_input(
+    "Ask about nutrition..."
+)
 
-if user_input:
+if user_question:
 
-    response = qa_chain.run(user_input)
+    answer = qa_chain.run(user_question)
 
-    st.write(response)
+    st.write(answer)
