@@ -1,9 +1,6 @@
 streamlit
-numpy
 langchain
-langchain-community
 langchain-google-genai
 faiss-cpu
-google-generativeai
-python-dotenv
-pydantic
+pillow
+pandas
