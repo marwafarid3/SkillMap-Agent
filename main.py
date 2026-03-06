@@ -12,7 +12,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from langchain_core.documents import Document
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 
 from langchain.chains import RetrievalQA
 
@@ -209,3 +209,4 @@ if user_question:
     answer = qa_chain.run(user_question)
 
     st.write(answer)
+
