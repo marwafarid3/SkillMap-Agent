@@ -1,110 +1,141 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import List
 import os
+import streamlit as st
+from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain.prompts import ChatPromptTemplate
-from langchain.tools import tool
-from langchain_core.output_parsers import JsonOutputParser
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain.vectorstores import FAISS
 
+# ======================
+# LOAD API KEY
+# ======================
 
-# ==============================
-# 1️⃣ Set Gemini API Key
-# ==============================
-# حطي مفتاحك هنا أو في environment variable
-os.environ["GOOGLE_API_KEY"] = "AIzaSyBiw5o4Zv5t40PS8oB7naNeDqt3UD157nQ"
+load_dotenv()
+API_KEY = os.getenv("AIzaSyAFcvpt-Fs_muflBT96HNZbw4c_9Axa0ik")
 
+# ======================
+# GEMINI MODEL
+# ======================
 
-# ==============================
-# 2️⃣ Define LLM (Gemini)
-# ==============================
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    temperature=0.3
+    model="gemini-pro",
+    google_api_key=API_KEY,
+    temperature=0.2
 )
 
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/embedding-001",
+    google_api_key=API_KEY
+)
 
-# ==============================
-# 3️⃣ Structured Output Schema
-# ==============================
-class StudyPlanOutput(BaseModel):
-    plan: str = Field(description="Detailed step by step study plan")
-    resources: List[str] = Field(description="List of recommended resources")
-    tips: List[str] = Field(description="Practical study tips")
+# ======================
+# NUTRITION KNOWLEDGE
+# ======================
 
+knowledge = [
+"Protein should be about 30% of daily calories",
+"Fat should be about 25% of daily calories",
+"Carbohydrates should be about 45% of daily calories",
+"TDEE equals BMR multiplied by activity level",
+"Weight loss requires calorie deficit"
+]
 
-parser = JsonOutputParser(pydantic_object=StudyPlanOutput)
+vectorstore = FAISS.from_texts(knowledge, embeddings)
 
+# ======================
+# CALCULATIONS
+# ======================
 
-# ==============================
-# 4️⃣ Tool
-# ==============================
-@tool
-def generate_study_plan(track: str, level: str, hours: int, goal: str):
-    """
-    Generate structured study plan for a tech track.
-    """
+def calculate_bmr(weight, height, age, gender):
 
-    prompt = f"""
-    Create a structured learning plan.
+    if gender == "male":
+        return (10*weight)+(6.25*height)-(5*age)+5
+    else:
+        return (10*weight)+(6.25*height)-(5*age)-161
 
-    Track: {track}
-    Level: {level}
-    Study hours per day: {hours}
-    Goal: {goal}
+def activity_factor(level):
 
-    Return response in JSON format with:
-    plan: string
-    resources: list of strings
-    tips: list of strings
-    """
+    factors={
+        "low":1.2,
+        "medium":1.55,
+        "high":1.9
+    }
 
-    response = llm.invoke(prompt)
-    return response.content
+    return factors[level]
 
+# ======================
+# UI
+# ======================
 
-# ==============================
-# 5️⃣ Create Agent
-# ==============================
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a professional tech career mentor."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}")
-])
+st.title("🥗 AI Nutrition Planner")
 
-agent = create_tool_calling_agent(llm, [generate_study_plan], prompt)
-agent_executor = AgentExecutor(agent=agent, tools=[generate_study_plan], verbose=True)
+tab1,tab2=st.tabs(["Diet Generator","Nutrition Chat"])
 
+# ======================
+# DIET GENERATOR
+# ======================
 
-# ==============================
-# 6️⃣ FastAPI
-# ==============================
-app = FastAPI(title="Tech Career Agent")
+with tab1:
 
+    goal=st.selectbox("Goal",["weight loss","muscle gain","maintenance"])
 
-class UserInput(BaseModel):
-    track: str
-    level: str
-    hours: int
-    goal: str
+    weight=st.number_input("Weight",40,200)
 
+    height=st.number_input("Height",120,220)
 
-@app.post("/generate", response_model=StudyPlanOutput)
-def generate(user_input: UserInput):
+    age=st.number_input("Age",10,80)
 
-    user_prompt = f"""
-    Generate study plan for:
-    Track: {user_input.track}
-    Level: {user_input.level}
-    Hours per day: {user_input.hours}
-    Goal: {user_input.goal}
-    """
+    gender=st.selectbox("Gender",["male","female"])
 
-    result = agent_executor.invoke({"input": user_prompt})
+    activity=st.selectbox("Activity",["low","medium","high"])
 
-    # Parse structured JSON
-    parsed = parser.parse(result["output"])
+    if st.button("Generate Diet Plan"):
 
-    return parsed
+        bmr=calculate_bmr(weight,height,age,gender)
+
+        tdee=bmr*activity_factor(activity)
+
+        prompt=f"""
+        Create a scientific 7 day diet plan.
+
+        Goal: {goal}
+        BMR: {bmr}
+        TDEE: {tdee}
+        """
+
+        result=llm.invoke(prompt)
+
+        st.subheader("Your Metrics")
+
+        st.write("BMR:",round(bmr,2))
+        st.write("TDEE:",round(tdee,2))
+
+        st.subheader("Diet Plan")
+
+        st.write(result.content)
+
+# ======================
+# CHAT
+# ======================
+
+with tab2:
+
+    question=st.text_input("Ask nutrition question")
+
+    if st.button("Ask AI"):
+
+        docs=vectorstore.similarity_search(question,k=2)
+
+        context="\n".join([d.page_content for d in docs])
+
+        prompt=f"""
+        Context:
+        {context}
+
+        Question:
+        {question}
+        """
+
+        result=llm.invoke(prompt)
+
+        st.write(result.content)
