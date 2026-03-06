@@ -2,12 +2,4 @@ fastapi
 uvicorn
 langchain
 langchain-google-genai
-faiss-cpu
-sentence-transformers
-pillow
-pydantic
-python-multipart
-transformers
-torch
-
-
+python-dotenv
